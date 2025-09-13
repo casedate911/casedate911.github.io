@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<script>
+var _hmt = _hmt || [];
+(function() {
+  var hm = document.createElement("script");
+  hm.src = "https://hm.baidu.com/hm.js?4227ae2c511d2f6bc7a9444bffb1154b";
+  var s = document.getElementsByTagName("script")[0]; 
+  s.parentNode.insertBefore(hm, s);
+})();
+</script>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>911Design</title>
+    <style>
+        body { font-family: '微软雅黑'; max-width: 1000px; margin: 20px auto; padding: 20px; }
+        .container { border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+        .file-drop { height: 200px; border: 2px dashed #ccc; border-radius: 8px; display: flex; align-items: center; justify-content: center; cursor: pointer; margin-bottom: 20px; }
+        #result { margin-top: 20px; line-height: 1.6; }
+        .loading { display: none; color: #666; }
+        .error { color: red; }
+        .photo-list { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px;}
+        .photo-item { width: calc(33.333% - 10px); box-sizing: border-box;}
+        .photo-thumbnail { width: 100%; height: auto; border-radius: 4px;}
+        .photo-info { font-size: 12px;}
+        .photo-map-container { width: 100%; height: 200px; margin-top: 8px; border-radius: 4px; border: 1px solid #e0e0e0;}
+        #map-container { width:100%; height:400px;}
+        .amap-btn { margin-top: 6px; display: inline-block; background: #409eff; color: #fff; border: none; border-radius: 3px; padding: 8px 12px; cursor: pointer; font-size: 13px;}
+        .amap-btn:hover { background: #1976d2; }
+        .photo-item { position: relative; }
+        footer { text-align: center; margin: 20px 0; color: #666; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>多照片地理位置提取工具</h2>
+        <div class="file-drop" id="fileDrop">
+            <input type="file" accept="image/*" id="photoInput" multiple style="display:none;">
+            <p>点击或拖拽上传多张照片（需包含GPS信息）</p>
+        </div>
+        <div class="photo-list" id="photoList"></div>
+        <div class="loading">正在处理...请稍候</div>
+        <div id="result"></div>
+        <div id="map-container"></div>
+    </div>
+
+    <script src="https://webapi.amap.com/maps?v=2.0&key=6721a02023416bb36161a2eaa735b85a"></script>
+
+    <script>
+    function ensureExif() {
+        return new Promise((resolve, reject) => {
+            if (window.EXIF) return resolve();
+            const s = document.createElement('script');
+            s.src = 'https://cdn.jsdelivr.net/npm/exif-js@2.3.0/exif.min.js';
+            s.onload = () => resolve();
+            s.onerror = () => reject(new Error('无法加载 EXIF 库'));
+            document.head.appendChild(s);
+        });
+    }
+    const redStarIcon = 'data:image/svg+xml;utf8,<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><polygon points="16,3 20,13 31,13 22,19 25,29 16,23 7,29 10,19 1,13 12,13" fill="red" stroke="black" stroke-width="1"/></svg>';
+
+    const fileDrop = document.getElementById('fileDrop');
+    const photoInput = document.getElementById('photoInput');
+    const photoList = document.getElementById('photoList');
+    const resultDiv = document.getElementById('result');
+    const loadingDiv = document.querySelector('.loading');
+    let map = null;
+    let markers = [];
+    let photosData = [];
+
+    fileDrop.addEventListener('click', () => {
+        photoInput.value = '';
+        photoInput.click();
+    });
+
+    photoInput.addEventListener('change', handlePhotoUpload);
+
+    fileDrop.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        fileDrop.style.borderColor = '#666';
+        fileDrop.style.backgroundColor = '#f9f9f9';
+    });
+    fileDrop.addEventListener('dragleave', () => {
+        fileDrop.style.borderColor = '#ccc';
+        fileDrop.style.backgroundColor = '';
+    });
+    fileDrop.addEventListener('drop', (e) => {
+        e.preventDefault();
+        fileDrop.style.borderColor = '#ccc';
+        fileDrop.style.backgroundColor = '';
+        if (e.dataTransfer.files.length > 0) {
+            handlePhotoUpload({ target: { files: e.dataTransfer.files } });
+        }
+    });
+
+    async function handlePhotoUpload(e) {
+        try {
+            await ensureExif();
+        } catch (err) {
+            loadingDiv.style.display = 'none';
+            resultDiv.classList.add('error');
+            resultDiv.textContent = '无法加载 EXIF 库：' + err.message + '，请检查网络或改为离线引入 exif-js。';
+            return;
+        }
+        const files = e.target.files;
+        if (!files || files.length === 0) return;
+        loadingDiv.style.display = 'block';
+        resultDiv.innerHTML = '';
+        photoList.innerHTML = '';
+        photosData = [];
+        clearMarkers();
+        await initMap();
+
+        let successCount = 0;
+        for (let i = 0; i < files.length; i++) {
+            try {
+                await processPhoto(files[i], i + 1, files.length);
+                successCount++;
+            } catch (err) {
+                createErrorThumbnailPreview(files[i], i + 1, err.message);
+            }
+        }
+        if (successCount === 0) {
+            resultDiv.classList.add('error');
+            resultDiv.textContent = "所有照片均无有效GPS信息";
+        } else {
+            showSummaryResult();
+            fitMapBounds();
+        }
+        loadingDiv.style.display = 'none';
+    }
+
+    async function processPhoto(file, index, totalCount) {
+        return new Promise((resolve, reject) => {
+            if (typeof EXIF === 'undefined') {
+                reject(new Error('EXIF is not defined'));
+                return;
+            }
+            EXIF.getData(file, function () {
+                const exifData = EXIF.getAllTags(this);
+                if (!exifData.GPSLatitude || !exifData.GPSLongitude) {
+                    reject(new Error("不含GPS定位信息"));
+                    return;
+                }
+                const gps = parseGPS(exifData);
+                if (!gps.lng || !gps.lat) {
+                    reject(new Error("无法解析GPS坐标"));
+                    return;
+                }
+                const [gcjLng, gcjLat] = wgs84togcj02(gps.lng, gps.lat);
+                createThumbnailPreview(file, index, gcjLng, gcjLat, exifData, "正在获取...");
+                photosData.push({
+                    index,
+                    name: file.name,
+                    url: URL.createObjectURL(file),
+                    gpsWGS84: { lng: gps.lng, lat: gps.lat },
+                    gpsGCJ02: { lng: gcjLng, lat: gcjLat },
+                    exifData,
+                    address: "",
+                    file
+                });
+                addMarkerToMap(index, gcjLng, gcjLat, file.name, "正在获取...");
+                getAddressFromAmap(gcjLng, gcjLat).then(addrObj => {
+                    const addrStr = (addrObj && addrObj.formatted) ? addrObj.formatted : '未找到地址';
+                    updateMarkerInfo(index - 1, addrStr);
+                    photosData[index - 1].address = addrObj;
+                    updateThumbnailAddress(index - 1, addrObj);
+                    updatePhotoMap(index, gcjLng, gcjLat, file.name, addrObj);
+                    resolve();
+                }).catch(() => {
+                    updateMarkerInfo(index - 1, "地址获取失败");
+                    const failObj = { formatted: '地址获取失败', poi: '', components: null };
+                    photosData[index - 1].address = failObj;
+                    updateThumbnailAddress(index - 1, failObj);
+                    updatePhotoMap(index, gcjLng, gcjLat, file.name, failObj);
+                    resolve();
+                });
+            });
+        });
+    }
+
+    function createThumbnailPreview(file, index, lng, lat, exifData, address) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const item = document.createElement('div');
+            item.className = 'photo-item';
+            let addressText = '';
+            if (typeof address === 'string') addressText = address;
+            else if (address && address.formatted) addressText = address.poi ? `${address.poi} (${address.formatted})` : address.formatted;
+            else addressText = '' + address;
+            const device = exifData && (exifData.Make || exifData.Model) ? `${exifData.Make || ''} ${exifData.Model || ''}`.trim() : '未知';
+            const shotTime = getDateTimeFromExif(exifData);
+            function fmt(v){ return (typeof v === 'number') ? v.toFixed(8) : v; }
+            const fullGcjLng = (photosData && photosData[index-1] && photosData[index-1].gpsGCJ02) ? photosData[index-1].gpsGCJ02.lng : lng;
+            const fullGcjLat = (photosData && photosData[index-1] && photosData[index-1].gpsGCJ02) ? photosData[index-1].gpsGCJ02.lat : lat;
+            item.innerHTML = `
+                <img src="${e.target.result}" class="photo-thumbnail">
+                <p class="photo-info" id="photo-info-${index}">
+                    ${index}. ${file.name}<br/>
+                    拍摄设备：${device}<br/>
+                    拍摄时间：${shotTime}<br/>
+                    经度：<span title="${fullGcjLng}">${fmt(fullGcjLng)}</span><br/>
+                    纬度：<span title="${fullGcjLat}">${fmt(fullGcjLat)}</span><br/>
+                    拍摄地点：${addressText}
+                </p>
+                <div id="photo-map-${index}" class="photo-map-container"></div>
+                <button class="amap-btn" onclick="openInAmapSingle(${index-1})">在高德地图中打开</button>
+                <button class="amap-btn" onclick="copyCoords(${index-1})">复制坐标</button>
+            `;
+            photoList.appendChild(item);
+            setTimeout(() => {
+                updatePhotoMap(index, lng, lat, file.name, address);
+            }, 0);
+        };
+        reader.readAsDataURL(file);
+    }
+
+    function updateThumbnailAddress(index, address) {
+        const info = document.getElementById('photo-info-' + (index + 1));
+        if (!info) return;
+        let addressText = '';
+        if (typeof address === 'string') addressText = address;
+        else if (address && address.formatted) addressText = address.poi ? `${address.poi} (${address.formatted})` : address.formatted;
+        else addressText = '' + address;
+        if (/拍摄地点：/.test(info.innerHTML)) {
+            info.innerHTML = info.innerHTML.replace(/拍摄地点：.*$/s, `拍摄地点：${addressText}`);
+        } else {
+            info.innerHTML += `<br/>拍摄地点：${addressText}`;
+        }
+    }
+
+    function createErrorThumbnailPreview(file, index, errorMsg) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            let device = '未知';
+            let shotTime = '未知';
+            if (window.EXIF) {
+                try {
+                    EXIF.getData(file, function() {
+                        const ex = EXIF.getAllTags(this) || {};
+                        device = (ex.Make || ex.Model) ? `${ex.Make || ''} ${ex.Model || ''}`.trim() : device;
+                        shotTime = getDateTimeFromExif(ex);
+                    });
+                } catch (err) {
+                }
+            }
+            const item = document.createElement('div');
+            item.className = 'photo-item';
+            item.innerHTML = `
+                <img src="${e.target.result}" class="photo-thumbnail">
+                <p class="photo-info" style="color:#f00;" id="photo-info-${index}">
+                    ${index}. ${file.name}<br/>
+                    拍摄设备：${device}<br/>
+                    拍摄时间：${shotTime}<br/>
+                    错误：${errorMsg}
+                </p>`;
+            photoList.appendChild(item);
+        };
+        reader.readAsDataURL(file);
+    }
+
+    function showSummaryResult() {
+        let html = `<h3>处理完成</h3><p>成功解析 ${photosData.length} 张照片的GPS信息。</p><hr/>`;
+        photosData.forEach((data, idx) => {
+            html += `
+                <details style="margin-bottom:10px;">
+                    <summary><strong>${data.index}. ${data.name}</strong></summary>
+                    <ul style="padding-left:15px;">
+                        <li><strong>原始坐标(WGS84)</strong>: <span title="${data.gpsWGS84.lat},${data.gpsWGS84.lng}">${data.gpsWGS84.lat.toFixed(8)}, ${data.gpsWGS84.lng.toFixed(8)}</span> <button class="amap-btn" onclick="copyCoords(${idx})">复制坐标</button></li>
+                        <li><strong>转换坐标(GCJ02)</strong>: <span title="${data.gpsGCJ02.lat},${data.gpsGCJ02.lng}">${data.gpsGCJ02.lat.toFixed(8)}, ${data.gpsGCJ02.lng.toFixed(8)}</span></li>
+                        <li><strong>拍摄时间</strong>: ${getDateTimeFromExif(data.exifData)}</li>
+                        <li><strong>拍摄设备</strong>: ${data.exifData && (data.exifData.Make || data.exifData.Model) ? `${data.exifData.Make || ''} ${data.exifData.Model || ''}` : '未知'}</li>
+                        <li><strong>拍摄地点</strong>:<br/>${(data.address && data.address.formatted) ? (data.address.poi ? (data.address.poi + '<br/>' + data.address.formatted) : data.address.formatted) : (data.address || '未获取')}</li>
+                        <li><button class="amap-btn" onclick="openInAmapSingle(${idx})">在高德地图中打开</button></li>
+                    </ul>
+                </details>
+            `;
+        });
+        html += `<hr/><button class="amap-btn" onclick="openAllInAmap()">在高德地图中查看全部位置</button>`;
+        resultDiv.innerHTML = html;
+    }
+
+    async function initMap() {
+        if (map) return;
+        map = new AMap.Map('map-container', {
+            zoom: 13,
+            viewMode: '3D'
+        });
+    }
+
+    function addMarkerToMap(index, lng, lat, title, content) {
+        if (!map) return;
+        const marker = new AMap.Marker({
+            position: [lng, lat],
+            title: `${index}. ${title}`,
+            icon: new AMap.Icon({
+                image: redStarIcon,
+                size: new AMap.Size(32, 32),
+                imageSize: new AMap.Size(32, 32)
+            }),
+            offset: new AMap.Pixel(-16, -32)
+        });
+        marker.setMap(map);
+        markers.push(marker);
+    }
+
+    function updateMarkerInfo(index, address) {
+        if (!markers[index]) return;
+        markers[index].setTitle(`${photosData[index].index}. ${photosData[index].name}\n${address}`);
+    }
+
+    function fitMapBounds() {
+        if (!map || markers.length === 0) return;
+        map.setFitView(markers);
+        if (markers.length === 1) {
+            map.setZoom(15);
+        }
+    }
+
+    function clearMarkers() {
+        if (!map) return;
+        markers.forEach(m => m.setMap(null));
+        markers = [];
+    }
+
+    function getDateTimeFromExif(exifData) {
+        if (!exifData || !exifData.DateTimeOriginal) return '未知';
+        const dtStr = String(exifData.DateTimeOriginal);
+        if (/^\d{4}:\d{2}:\d{2}\s\d{2}:\d{2}:\d{2}$/.test(dtStr)) {
+            return dtStr.replace(/:/g, '-').replace(' ', ' ');
+        } else {
+            return dtStr;
+        }
+    }
+
+    function parseGPS(exifData) {
+        function dmsToDeg(dms, ref) {
+            if (!dms) return null;
+            let deg = dms[0], min = dms[1], sec = dms[2];
+            let val = deg + min / 60 + sec / 3600;
+            if (ref === 'S' || ref === 'W') val = -val;
+            return val;
+        }
+        return {
+            lat: dmsToDeg(exifData.GPSLatitude, exifData.GPSLatitudeRef),
+            lng: dmsToDeg(exifData.GPSLongitude, exifData.GPSLongitudeRef)
+        };
+    }
+
+    function wgs84togcj02(lng, lat) {
+        if (outOfChina(lng, lat)) return [lng, lat];
+        let dlat = transformLat(lng - 105.0, lat - 35.0);
+        let dlng = transformLng(lng - 105.0, lat - 35.0);
+        let radlat = lat / 180.0 * Math.PI;
+        let magic = Math.sin(radlat);
+        magic = 1 - 0.00669342162296594323 * magic * magic;
+        let sqrtMagic = Math.sqrt(magic);
+        dlat = (dlat * 180.0) / ((6378245.0 * (1 - 0.00669342162296594323)) / (magic * sqrtMagic) * Math.PI);
+        dlng = (dlng * 180.0) / (6378245.0 / sqrtMagic * Math.cos(radlat) * Math.PI);
+        let mglat = lat + dlat;
+        let mglng = lng + dlng;
+        return [mglng, mglat];
+    }
+    function outOfChina(lng, lat) {
+        return (lng < 72.004 || lng > 137.8347) || (lat < 0.8293 || lat > 55.8271);
+    }
+    function transformLat(x, y) {
+        let ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x));
+        ret += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0;
+        ret += (20.0 * Math.sin(y * Math.PI) + 40.0 * Math.sin(y / 3.0 * Math.PI)) * 2.0 / 3.0;
+        ret += (160.0 * Math.sin(y / 12.0 * Math.PI) + 320 * Math.sin(y * Math.PI / 30.0)) * 2.0 / 3.0;
+        return ret;
+    }
+    function transformLng(x, y) {
+        let ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x));
+        ret += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0;
+        ret += (20.0 * Math.sin(x * Math.PI) + 40.0 * Math.sin(x / 3.0 * Math.PI)) * 2.0 / 3.0;
+        ret += (150.0 * Math.sin(x / 12.0 * Math.PI) + 300.0 * Math.sin(x / 30.0 * Math.PI)) * 2.0 / 3.0;
+        return ret;
+    }
+
+    async function getAddressFromAmap(lng, lat) {
+        const key = '6721a02023416bb36161a2eaa735b85a';
+        const url = `https://restapi.amap.com/v3/geocode/regeo?key=${key}&location=${lng},${lat}&extensions=all&radius=1000&roadlevel=0`;
+        try {
+            const response = await fetch(url);
+            const data = await response.json();
+            if (data.status !== '1') throw new Error('高德API错误:' + data.info);
+            const regeocode = data.regeocode || {};
+            const formatted = regeocode.formatted_address || '未找到地址';
+            let poi = '';
+            if (regeocode.pois && regeocode.pois.length > 0) {
+                poi = regeocode.pois[0].name || '';
+            }
+            const components = regeocode.addressComponent || null;
+            return { formatted, poi, components };
+        } catch (err) {
+            return { formatted: '地址获取失败', poi: '', components: null };
+        }
+    }
+
+    function updatePhotoMap(index, lng, lat, title, address) {
+        const mapDiv = document.getElementById('photo-map-' + index);
+        if (!mapDiv) return;
+        if (mapDiv._amap_instance) {
+            mapDiv._amap_instance.destroy();
+            mapDiv._amap_instance = null;
+        }
+        const photoMap = new AMap.Map(mapDiv, {
+            zoom: 15,
+            center: [lng, lat],
+            viewMode: '3D',
+            resizeEnable: false,
+            dragEnable: false,
+            doubleClickZoom: false,
+            keyboardEnable: false,
+            scrollWheel: false
+        });
+        const marker = new AMap.Marker({
+            position: [lng, lat],
+            title: title,
+            icon: new AMap.Icon({
+                image: redStarIcon,
+                size: new AMap.Size(32, 32),
+                imageSize: new AMap.Size(32, 32)
+            }),
+            offset: new AMap.Pixel(-16, -32)
+        });
+        marker.setMap(photoMap);
+        if (address && typeof address === 'string' && address !== "正在获取...") {
+            marker.setTitle(`${title}\n${address}`);
+        } else if (address && address.formatted) {
+            marker.setTitle(`${title}\n${address.poi ? address.poi + ' - ' : ''}${address.formatted}`);
+        }
+        mapDiv._amap_instance = photoMap;
+    }
+
+    window.openAllInAmap = function () {
+        if (!photosData.length) return;
+        let base = 'https://uri.amap.com/marker?';
+        let params = photosData.map(d =>
+            `position=${d.gpsGCJ02.lng},${d.gpsGCJ02.lat}&name=${encodeURIComponent(d.name)}`
+        ).join('&');
+        const zoomParam = '&zoom=15';
+        const srcParam = '&src=gzcase20190120';
+        window.open(base + params + zoomParam + srcParam, '_blank');
+    };
+
+    window.openInAmapSingle = function(idx) {
+        if (!photosData[idx]) return;
+        const d = photosData[idx];
+        const zoom = 15;
+        const src = 'gzcase20190120';
+        let url = `https://uri.amap.com/marker?position=${d.gpsGCJ02.lng},${d.gpsGCJ02.lat}&name=${encodeURIComponent(d.name)}&zoom=${zoom}&src=${src}`;
+        window.open(url, '_blank');
+    };
+    </script>
+    <footer>2025@王贵平保留所有权</footer>
+</body>
+</html>
