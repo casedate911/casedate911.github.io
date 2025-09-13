@@ -328,7 +328,10 @@ var _hmt = _hmt || [];
         if (!exifData || !exifData.DateTimeOriginal) return '未知';
         const dtStr = String(exifData.DateTimeOriginal);
         if (/^\d{4}:\d{2}:\d{2}\s\d{2}:\d{2}:\d{2}$/.test(dtStr)) {
-            return dtStr.replace(/:/g, '-').replace(' ', ' ');
+            const [datePart, timePart] = dtStr.split(' ');
+            const [year, month, day] = datePart.split(':');
+            const date = new Date(`${year}-${month}-${day}T${timePart}`);
+            return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日 ${timePart}`;
         } else {
             return dtStr;
         }
