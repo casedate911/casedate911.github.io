@@ -34,11 +34,50 @@ var _hmt = _hmt || [];
     #photoInput{ display:none; }
         #exportCsvBtn svg{ display:block; }
         #exportCsvBtn span{ position:relative; top:-6px; font-size:12px; color:#1976d2; }
-        #exportCsvBtn:disabled{ opacity:0.5; cursor:not-allowed; }
         #exportCsvBtn:hover{ transform:translateY(-2px); transition:transform 150ms ease; }
+        #safeUseWrap{ position:fixed; left:24px; top:24px; z-index:10000; }
+        #safeUseBtn{ width:72px; height:72px; border-radius:50%; border:2px solid rgba(0,0,0,0.06); background:linear-gradient(135deg,#fff 0%,#f3f7fb 100%); box-shadow:0 6px 18px rgba(11,22,62,0.08); display:flex; align-items:center; justify-content:center; flex-direction:column; cursor:pointer; font-family:'微软雅黑'; }
+        #safeUseBtn div{ position:relative; top:-8px; font-size:12px; color:#00a86b; }
+        #safeUsePanel{ display:none; margin-top:8px; width:320px; background:#fff; border-radius:8px; box-shadow:0 8px 28px rgba(11,22,62,0.12); padding:14px; font-size:13px; color:#333; }
+        #safeUsePanel h4{ margin:0 0 8px 0; color:#0b3f2e; }
+        #safeUsePanel p{ margin:0 0 8px 0; font-size:13px; color:#444; }
+        #safeUsePanel ul, #safeUsePanel ol{ margin:0 0 8px 18px; padding:0; color:#444; }
+        #safeUsePanel .actions{ margin-top:10px; display:flex; gap:8px; justify-content:flex-end; }
+        #safeUseClose{ background:#f3f3f3; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; }
+        #safeUseMore{ background:#00a86b; color:#fff; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; }
     </style>
 </head>
 <body>
+    <div id="safeUseWrap">
+        <button id="safeUseBtn" title="放心用" aria-expanded="false" aria-controls="safeUsePanel">
+            <svg width="46" height="46" viewBox="0 0 46 46" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="23" cy="23" r="21" stroke="#00a86b" stroke-width="2" fill="none" stroke-opacity="0.14" />
+                <path d="M14 23c2 4 6 8 15 4" stroke="#00a86b" stroke-width="2" stroke-linecap="round" fill="none"/>
+            </svg>
+            <div>放心用</div>
+        </button>
+        <div id="safeUsePanel" role="region" aria-hidden="true">
+            <h4>放心使用 — 隐私与技术说明</h4>
+            <p>我们理解您的隐私关切。请放心：</p>
+            <ul>
+                <li>照片仅在您的浏览器本地读取与解析，原始图片文件不会自动上传到我们的服务器。</li>
+                <li>仅对经纬度坐标调用高德逆地理接口以获取位置描述；调用时只发送经纬度，不发送原图或其他个人信息。</li>
+                <li>解析得到的数据（坐标、时间、设备型号等）默认仅保存在浏览器会话内，页面刷新后会清空，不会主动持久化到服务器。</li>
+                <li>如果您选择导出（CSV）或手动上传数据，才会在您的操作下生成或传输数据；服务端不会在未授权下保存您的原始照片。</li>
+            </ul>
+            <p>技术细节：</p>
+            <ol>
+                <li>使用 <strong>exif-js</strong> 于浏览器端读取照片 EXIF，不上传原始图片。</li>
+                <li>坐标转换（WGS84 → GCJ02）在客户端完成，随后仅用 GCJ02 坐标调用高德逆地理服务。</li>
+                <li>CSV 导出在浏览器端生成并触发下载（UTF-8 BOM），不会自动发送到任何第三方。</li>
+                <li>您可以关闭页面或清除缓存以清理会话数据；我们不在未授权情况下进行长期存储。</li>
+            </ol>
+            <div class="actions">
+                <button id="safeUseClose">关闭</button>
+                <button id="safeUseMore">查看更多</button>
+            </div>
+        </div>
+    </div>
     <div class="container">
         <h2>多照片地理位置提取工具</h2>
         <div class="file-drop" id="fileDrop">
@@ -573,6 +612,27 @@ var _hmt = _hmt || [];
 
     fileDrop.addEventListener('click', () => updateExportButtonState());
     updateExportButtonState();
+    (function(){
+        function setupSafeUse(){
+            const safeBtn = document.getElementById('safeUseBtn');
+            const panel = document.getElementById('safeUsePanel');
+            const closeBtn = document.getElementById('safeUseClose');
+            const moreBtn = document.getElementById('safeUseMore');
+            if(!safeBtn || !panel) return false;
+            function openPanel(){ panel.style.display='block'; panel.setAttribute('aria-hidden','false'); safeBtn.setAttribute('aria-expanded','true'); }
+            function closePanel(){ panel.style.display='none'; panel.setAttribute('aria-hidden','true'); safeBtn.setAttribute('aria-expanded','false'); }
+            safeBtn.addEventListener('click', function(e){ e.stopPropagation(); if(panel.style.display==='block') closePanel(); else openPanel(); });
+            panel.addEventListener('click', function(e){ e.stopPropagation(); });
+            closeBtn && closeBtn.addEventListener('click', function(e){ e.stopPropagation(); closePanel(); });
+            moreBtn && moreBtn.addEventListener('click', function(e){ e.stopPropagation(); window.open('https://www.amap.com/privacy','_blank'); });
+            document.addEventListener('click', function(e){ if(panel.style.display==='block'){ const path = e.composedPath ? e.composedPath() : (e.path || []); if(path.indexOf(panel)===-1 && path.indexOf(safeBtn)===-1){ closePanel(); } } });
+            document.addEventListener('keydown', function(e){ if(e.key === 'Escape' || e.key === 'Esc'){ if(panel.style.display==='block') closePanel(); } });
+            return true;
+        }
+        if(!setupSafeUse()){
+            document.addEventListener('DOMContentLoaded', function(){ setupSafeUse(); });
+        }
+    })();
     </script>
     <footer>2025@王贵平保留所有权</footer>
 </body>
