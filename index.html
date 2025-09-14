@@ -30,13 +30,19 @@ var _hmt = _hmt || [];
         .amap-btn:hover { background: #1976d2; }
         .photo-item { position: relative; }
         footer { text-align: center; margin: 20px 0; color: #666; font-size: 14px; }
+    #exportCsvBtn{ display:none; position:fixed; right:24px; top:24px; z-index:9999; width:88px; height:88px; border-radius:50%; border:2px solid rgba(0,0,0,0.08); background:linear-gradient(135deg,#fff 0%,#f7f9fc 100%); box-shadow:0 6px 18px rgba(11,22,62,0.12); cursor:pointer; display:flex; align-items:center; justify-content:center; flex-direction:column; font-family: '微软雅黑'; }
+    #photoInput{ display:none; }
+        #exportCsvBtn svg{ display:block; }
+        #exportCsvBtn span{ position:relative; top:-6px; font-size:12px; color:#1976d2; }
+        #exportCsvBtn:disabled{ opacity:0.5; cursor:not-allowed; }
+        #exportCsvBtn:hover{ transform:translateY(-2px); transition:transform 150ms ease; }
     </style>
 </head>
 <body>
     <div class="container">
         <h2>多照片地理位置提取工具</h2>
         <div class="file-drop" id="fileDrop">
-            <input type="file" accept="image/*" id="photoInput" multiple style="display:none;">
+            <input type="file" accept="image/*" id="photoInput" multiple>
             <p>点击或拖拽上传多张照片（需包含GPS信息）</p>
         </div>
         <div class="photo-list" id="photoList"></div>
@@ -44,6 +50,15 @@ var _hmt = _hmt || [];
         <div id="result"></div>
         <div id="map-container"></div>
     </div>
+
+    <button id="exportCsvBtn" title="导出数据" aria-label="导出数据">
+        <svg width="56" height="56" viewBox="0 0 56 56" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="28" cy="28" r="26" stroke="#1976d2" stroke-width="2" stroke-opacity="0.14" />
+            <path d="M28 16V34" stroke="#1976d2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M20 24L28 16L36 24" stroke="#1976d2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span>导出数据</span>
+    </button>
 
     <script src="https://webapi.amap.com/maps?v=2.0&key=6721a02023416bb36161a2eaa735b85a"></script>
 
@@ -128,6 +143,7 @@ var _hmt = _hmt || [];
             showSummaryResult();
             fitMapBounds();
         }
+        try{ updateExportButtonState(); }catch(e){}
         loadingDiv.style.display = 'none';
     }
 
@@ -483,6 +499,80 @@ var _hmt = _hmt || [];
         let url = `https://uri.amap.com/marker?position=${d.gpsGCJ02.lng},${d.gpsGCJ02.lat}&name=${encodeURIComponent(d.name)}&zoom=${zoom}&src=${src}`;
         window.open(url, '_blank');
     };
+
+    let exportBtn = document.getElementById('exportCsvBtn');
+    function escapeCsvCell(val) {
+        if (val === null || val === undefined) return '';
+        const s = String(val);
+        if (/[",\n\r]/.test(s)) {
+            return '"' + s.replace(/"/g, '""') + '"';
+        }
+        return s;
+    }
+
+    function buildCsvFromPhotos(dataList) {
+        const headers = ['序号','图片名称','拍摄时间','拍摄地点','原始坐标(WGS84)','转换坐标(GCJ02)','拍摄设备(品牌/型号)'];
+        const rows = [headers.map(escapeCsvCell).join(',')];
+        dataList.forEach(d => {
+            const index = d.index || '';
+            const name = d.name || '';
+            const shotTime = getDateTimeFromExif(d.exifData) || '';
+            const place = (d.address && d.address.formatted) ? (d.address.poi ? (d.address.poi + ' - ' + d.address.formatted) : d.address.formatted) : '';
+            const wgs = (d.gpsWGS84 && (typeof d.gpsWGS84.lat === 'number')) ? `${d.gpsWGS84.lat.toFixed(8)},${d.gpsWGS84.lng.toFixed(8)}` : '';
+            const gcj = (d.gpsGCJ02 && (typeof d.gpsGCJ02.lat === 'number')) ? `${d.gpsGCJ02.lat.toFixed(8)},${d.gpsGCJ02.lng.toFixed(8)}` : '';
+            const device = d.exifData && (d.exifData.Make || d.exifData.Model) ? `${d.exifData.Make || ''} ${d.exifData.Model || ''}`.trim() : '';
+            const row = [index, name, shotTime, place, wgs, gcj, device].map(escapeCsvCell).join(',');
+            rows.push(row);
+        });
+        return rows.join('\r\n');
+    }
+
+    function triggerDownload(filename, content) {
+        const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+    }
+
+    function attachExportHandler() {
+        if (!exportBtn) return;
+        exportBtn.addEventListener('click', () => {
+            if (!photosData || photosData.length === 0) return;
+            const csv = buildCsvFromPhotos(photosData);
+            const now = new Date();
+            const ts = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}`;
+            triggerDownload(`photos_export_${ts}.csv`, '\uFEFF' + csv);
+        });
+    }
+
+    if (exportBtn) {
+        attachExportHandler();
+    } else {
+        document.addEventListener('DOMContentLoaded', () => {
+            exportBtn = document.getElementById('exportCsvBtn');
+            attachExportHandler();
+            try{ updateExportButtonState(); }catch(e){}
+        });
+    }
+
+    function updateExportButtonState() {
+        if (!exportBtn) return;
+        if (photosData && photosData.length > 0) {
+            exportBtn.style.display = 'flex';
+            exportBtn.disabled = false;
+        } else {
+            exportBtn.style.display = 'none';
+            exportBtn.disabled = true;
+        }
+    }
+
+    fileDrop.addEventListener('click', () => updateExportButtonState());
+    updateExportButtonState();
     </script>
     <footer>2025@王贵平保留所有权</footer>
 </body>
