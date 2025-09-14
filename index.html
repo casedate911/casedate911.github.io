@@ -453,7 +453,7 @@ var _hmt = _hmt || [];
     window.copyCoords = function(idx) {
         if (!photosData[idx]) return;
         const d = photosData[idx];
-        const coords = `${d.gpsGCJ02.lng.toFixed(8)},${d.gpsGCJ02.lat.toFixed(8)}`;
+        const coords = `${d.gpsGCJ02.lat.toFixed(8)},${d.gpsGCJ02.lng.toFixed(8)}`;
         navigator.clipboard.writeText(coords).then(() => {
             const resultDiv = document.getElementById('result');
             const msg = document.createElement('div');
