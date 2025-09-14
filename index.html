@@ -195,12 +195,28 @@ var _hmt = _hmt || [];
             EXIF.getData(file, function () {
                 const exifData = EXIF.getAllTags(this);
                 if (!exifData.GPSLatitude || !exifData.GPSLongitude) {
-                    reject(new Error("不含GPS定位信息"));
+                    const err = new Error("不含GPS定位信息");
+                    err.exif = {
+                        GPSLatitude: exifData.GPSLatitude,
+                        GPSLatitudeRef: exifData.GPSLatitudeRef,
+                        GPSLongitude: exifData.GPSLongitude,
+                        GPSLongitudeRef: exifData.GPSLongitudeRef
+                    };
+                    console.warn('EXIF GPS fields:', err.exif, 'full EXIF:', exifData);
+                    reject(err);
                     return;
                 }
                 const gps = parseGPS(exifData);
-                if (!gps.lng || !gps.lat) {
-                    reject(new Error("无法解析GPS坐标"));
+                if (typeof gps.lng !== 'number' || typeof gps.lat !== 'number' || isNaN(gps.lng) || isNaN(gps.lat)) {
+                    const err = new Error("无法解析GPS坐标");
+                    err.exif = {
+                        GPSLatitude: exifData.GPSLatitude,
+                        GPSLatitudeRef: exifData.GPSLatitudeRef,
+                        GPSLongitude: exifData.GPSLongitude,
+                        GPSLongitudeRef: exifData.GPSLongitudeRef
+                    };
+                    console.warn('Parsed GPS is invalid:', gps, 'EXIF snippet:', err.exif, 'full EXIF:', exifData);
+                    reject(err);
                     return;
                 }
                 const [gcjLng, gcjLat] = wgs84togcj02(gps.lng, gps.lat);
@@ -290,25 +306,34 @@ var _hmt = _hmt || [];
         reader.onload = (e) => {
             let device = '未知';
             let shotTime = '未知';
+            let exifSnippet = null;
             if (window.EXIF) {
                 try {
                     EXIF.getData(file, function() {
                         const ex = EXIF.getAllTags(this) || {};
                         device = (ex.Make || ex.Model) ? `${ex.Make || ''} ${ex.Model || ''}`.trim() : device;
                         shotTime = getDateTimeFromExif(ex);
+                        exifSnippet = {
+                            GPSLatitude: ex.GPSLatitude,
+                            GPSLatitudeRef: ex.GPSLatitudeRef,
+                            GPSLongitude: ex.GPSLongitude,
+                            GPSLongitudeRef: ex.GPSLongitudeRef
+                        };
+                        console.warn('Error parsing photo EXIF:', exifSnippet, ex);
                     });
                 } catch (err) {
                 }
             }
             const item = document.createElement('div');
             item.className = 'photo-item';
+            const errDisplay = exifSnippet ? (`<br/>EXIF(GPS): ${JSON.stringify(exifSnippet)}`) : '';
             item.innerHTML = `
                 <img src="${e.target.result}" class="photo-thumbnail">
                 <p class="photo-info" style="color:#f00;" id="photo-info-${index}">
                     ${index}. ${file.name}<br/>
                     拍摄设备：${device}<br/>
                     拍摄时间：${shotTime}<br/>
-                    错误：${errorMsg}
+                    错误：${errorMsg}${errDisplay}
                 </p>`;
             photoList.appendChild(item);
         };
@@ -393,17 +418,42 @@ var _hmt = _hmt || [];
     }
 
     function parseGPS(exifData) {
+        function toNumber(v) {
+            if (v && typeof v === 'object') {
+                if ('numerator' in v && 'denominator' in v) {
+                    return v.denominator ? (v.numerator / v.denominator) : 0;
+                }
+                if (Array.isArray(v) && v.length >= 2) {
+                    return v[1] ? (v[0] / v[1]) : v[0];
+                }
+            }
+            if (typeof v === 'string') {
+                const parts = v.split('/');
+                if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+                    return Number(parts[0]) / Number(parts[1]);
+                }
+                const n = Number(v);
+                return isNaN(n) ? null : n;
+            }
+            // number
+            if (typeof v === 'number') return v;
+            return null;
+        }
+
         function dmsToDeg(dms, ref) {
-            if (!dms) return null;
-            let deg = dms[0], min = dms[1], sec = dms[2];
-            let val = deg + min / 60 + sec / 3600;
+            if (!dms || !dms.length) return NaN;
+            const deg = toNumber(dms[0]);
+            const min = toNumber(dms[1]);
+            const sec = toNumber(dms[2]);
+            if (deg === null || min === null || sec === null) return NaN;
+            let val = deg + (min || 0) / 60 + (sec || 0) / 3600;
             if (ref === 'S' || ref === 'W') val = -val;
             return val;
         }
-        return {
-            lat: dmsToDeg(exifData.GPSLatitude, exifData.GPSLatitudeRef),
-            lng: dmsToDeg(exifData.GPSLongitude, exifData.GPSLongitudeRef)
-        };
+
+        const lat = dmsToDeg(exifData.GPSLatitude, exifData.GPSLatitudeRef);
+        const lng = dmsToDeg(exifData.GPSLongitude, exifData.GPSLongitudeRef);
+        return { lat: lat, lng: lng };
     }
 
     function wgs84togcj02(lng, lat) {
