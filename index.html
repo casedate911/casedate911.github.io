@@ -45,6 +45,12 @@ var _hmt = _hmt || [];
         #safeUsePanel .actions{ margin-top:10px; display:flex; gap:8px; justify-content:flex-end; }
         #safeUseClose{ background:#f3f3f3; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; }
         #safeUseMore{ background:#00a86b; color:#fff; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; }
+    #shareBtn{ display:none; position:fixed; right:24px; top:124px; z-index:9999; width:88px; height:88px; border-radius:50%; border:2px solid rgba(0,0,0,0.08); background:linear-gradient(135deg,#fff 0%,#f7f9fc 100%); box-shadow:0 6px 18px rgba(11,22,62,0.12); cursor:pointer; display:flex; align-items:center; justify-content:center; flex-direction:column; font-family: '微软雅黑'; }
+    #shareBtn:hover{ transform:translateY(-2px); transition:transform 150ms ease; }
+    #shareBtn svg{ display:block; }
+    #shareBtn span{ position:relative; top:-6px; font-size:12px; color:#1976d2; }
+    /* 分享提示 */
+    .share-notice{ position:fixed; right:24px; top:220px; z-index:10001; background:rgba(0,0,0,0.7); color:#fff; padding:8px 12px; border-radius:6px; font-size:13px; display:none; }
     </style>
 </head>
 <body>
@@ -98,6 +104,16 @@ var _hmt = _hmt || [];
         </svg>
         <span>导出数据</span>
     </button>
+
+    <button id="shareBtn" title="分享" aria-label="分享页面链接">
+        <svg width="56" height="56" viewBox="0 0 56 56" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="28" cy="28" r="26" stroke="#1976d2" stroke-width="2" stroke-opacity="0.14" />
+            <path d="M20 32L36 20" stroke="#1976d2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M20 20H36V36" stroke="#1976d2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span>分享</span>
+    </button>
+    <div id="shareNotice" class="share-notice" role="status" aria-live="polite">链接已复制到剪贴板</div>
 
     <script src="https://webapi.amap.com/maps?v=2.0&key=6721a02023416bb36161a2eaa735b85a"></script>
 
@@ -649,16 +665,80 @@ var _hmt = _hmt || [];
         });
     }
 
+    const shareBtn = document.getElementById('shareBtn');
+    const shareNotice = document.getElementById('shareNotice');
+    const SHARE_URL = 'https://casedate911.github.io';
+
+    function showShareNotice(text, timeout = 3000) {
+        if (!shareNotice) return;
+        shareNotice.textContent = text;
+        shareNotice.style.display = 'block';
+        setTimeout(() => { shareNotice.style.display = 'none'; }, timeout);
+    }
+
+    async function handleShareClick() {
+        try {
+            if (navigator.share) {
+                await navigator.share({
+                    title: document.title || 'CaseDate911',
+                    text: '查看并使用该工具：',
+                    url: SHARE_URL
+                });
+                showShareNotice('已通过系统分享面板分享');
+                return;
+            }
+        } catch (err) {
+            // 如果 share 抛错，则回退到复制
+            console.warn('navigator.share failed:', err);
+        }
+        // 回退：复制到剪贴板
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            try {
+                await navigator.clipboard.writeText(SHARE_URL);
+                showShareNotice('链接已复制到剪贴板');
+                return;
+            } catch (err) {
+                console.warn('clipboard.writeText failed:', err);
+            }
+        }
+        // 最后退路：使用临时输入元素
+        try {
+            const ta = document.createElement('textarea');
+            ta.value = SHARE_URL;
+            ta.style.position = 'fixed'; ta.style.left = '-9999px';
+            document.body.appendChild(ta);
+            ta.select();
+            const ok = document.execCommand('copy');
+            document.body.removeChild(ta);
+            if (ok) {
+                showShareNotice('链接已复制到剪贴板');
+            } else {
+                showShareNotice('无法自动复制，请手动复制：' + SHARE_URL);
+            }
+        } catch (err) {
+            showShareNotice('无法复制链接，请手动复制：' + SHARE_URL);
+        }
+    }
+
+    if (shareBtn) {
+        shareBtn.addEventListener('click', handleShareClick);
+    }
+
     function updateExportButtonState() {
         if (!exportBtn) return;
         if (photosData && photosData.length > 0) {
             exportBtn.style.display = 'flex';
             exportBtn.disabled = false;
+            if (shareBtn) { shareBtn.style.display = 'flex'; shareBtn.disabled = false; }
         } else {
             exportBtn.style.display = 'none';
             exportBtn.disabled = true;
+            if (shareBtn) { shareBtn.style.display = 'none'; shareBtn.disabled = true; }
         }
     }
+
+
+    
 
     fileDrop.addEventListener('click', () => updateExportButtonState());
     updateExportButtonState();
