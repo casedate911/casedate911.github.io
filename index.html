@@ -28,6 +28,9 @@ var _hmt = _hmt || [];
         #map-container { width:100%; height:400px;}
         .amap-btn { margin-top: 6px; display: inline-block; background: #409eff; color: #fff; border: none; border-radius: 3px; padding: 8px 12px; cursor: pointer; font-size: 13px;}
         .amap-btn:hover { background: #1976d2; }
+    .coord-btn { margin-left:8px; display:inline-flex; align-items:center; gap:6px; background:#fff; color:#1976d2; border:1px solid #d0e6ff; padding:6px 8px; border-radius:6px; cursor:pointer; font-size:12px }
+    .coord-btn:hover{ background:#f3f9ff }
+    .coord-icon { width:14px; height:14px; display:inline-block; vertical-align:middle; }
         .photo-item { position: relative; }
         footer { text-align: center; margin: 20px 0; color: #666; font-size: 14px; }
     #exportCsvBtn{ display:none; position:fixed; right:24px; top:24px; z-index:9999; width:88px; height:88px; border-radius:50%; border:2px solid rgba(0,0,0,0.08); background:linear-gradient(135deg,#fff 0%,#f7f9fc 100%); box-shadow:0 6px 18px rgba(11,22,62,0.12); cursor:pointer; display:flex; align-items:center; justify-content:center; flex-direction:column; font-family: '微软雅黑'; }
@@ -294,7 +297,14 @@ var _hmt = _hmt || [];
                 </p>
                 <div id="photo-map-${index}" class="photo-map-container"></div>
                 <button class="amap-btn" onclick="openInAmapSingle(${index-1})">在高德地图中打开</button>
-                <button class="amap-btn" onclick="copyCoords(${index-1})">复制坐标</button>
+                <button class="coord-btn" onclick="copyCoord(${index-1}, 'wgs')" title="复制原始坐标(WGS84)">
+                    <svg class="coord-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 7a2 2 0 0 1 2-2h8" stroke="#1976d2" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><rect x="7" y="7" width="13" height="13" rx="2" stroke="#1976d2" stroke-width="1.6"/></svg>
+                    WGS84
+                </button>
+                <button class="coord-btn" onclick="copyCoord(${index-1}, 'gcj')" title="复制转换坐标(GCJ02)">
+                    <svg class="coord-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 7a2 2 0 0 1 2-2h8" stroke="#1976d2" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><rect x="7" y="7" width="13" height="13" rx="2" stroke="#1976d2" stroke-width="1.6"/></svg>
+                    GCJ02
+                </button>
             `;
             photoList.appendChild(item);
             setTimeout(() => {
@@ -364,8 +374,13 @@ var _hmt = _hmt || [];
                 <details style="margin-bottom:10px;">
                     <summary><strong>${data.index}. ${data.name}</strong></summary>
                     <ul style="padding-left:15px;">
-                        <li><strong>原始坐标(WGS84)</strong>: <span title="${data.gpsWGS84.lat},${data.gpsWGS84.lng}">${data.gpsWGS84.lat.toFixed(8)}, ${data.gpsWGS84.lng.toFixed(8)}</span> <button class="amap-btn" onclick="copyCoords(${idx})">复制坐标</button></li>
-                        <li><strong>转换坐标(GCJ02)</strong>: <span title="${data.gpsGCJ02.lat},${data.gpsGCJ02.lng}">${data.gpsGCJ02.lat.toFixed(8)}, ${data.gpsGCJ02.lng.toFixed(8)}</span></li>
+                                <li><strong>原始坐标(WGS84)</strong>: <span title="${data.gpsWGS84.lat},${data.gpsWGS84.lng}">${data.gpsWGS84.lat.toFixed(8)}, ${data.gpsWGS84.lng.toFixed(8)}</span>
+                                    <button class="coord-btn" onclick="copyCoord(${idx}, 'wgs')">复制 WGS84</button>
+                                    <button class="coord-btn" onclick="copyCoord(${idx}, 'gcj')">复制 GCJ02</button>
+                                </li>
+                                <li><strong>转换坐标(GCJ02)</strong>: <span title="${data.gpsGCJ02.lat},${data.gpsGCJ02.lng}">${data.gpsGCJ02.lat.toFixed(8)}, ${data.gpsGCJ02.lng.toFixed(8)}</span>
+                                    <button class="coord-btn" onclick="copyCoord(${idx}, 'gcj')">复制 GCJ02</button>
+                                </li>
                         <li><strong>拍摄时间</strong>: ${getDateTimeFromExif(data.exifData)}</li>
                         <li><strong>拍摄设备</strong>: ${data.exifData && (data.exifData.Make || data.exifData.Model) ? `${data.exifData.Make || ''} ${data.exifData.Model || ''}` : '未知'}</li>
                         <li><strong>拍摄地点</strong>:<br/>${(data.address && data.address.formatted) ? (data.address.poi ? (data.address.poi + '<br/>' + data.address.formatted) : data.address.formatted) : (data.address || '未获取')}</li>
@@ -573,29 +588,38 @@ var _hmt = _hmt || [];
     };
 
     window.copyCoords = function(idx) {
+        // 兼容旧接口：默认复制 GCJ02
+        copyCoord(idx, 'gcj');
+    };
+
+    function copyCoord(idx, type) {
         if (!photosData[idx]) return;
         const d = photosData[idx];
-        const coords = `${d.gpsGCJ02.lat.toFixed(8)},${d.gpsGCJ02.lng.toFixed(8)}`;
+        let coords = '';
+        if (type === 'wgs') {
+            if (!d.gpsWGS84 || typeof d.gpsWGS84.lat !== 'number') return showCopyMsg('无可用WGS84坐标', true);
+            coords = `${d.gpsWGS84.lat.toFixed(8)},${d.gpsWGS84.lng.toFixed(8)}`;
+        } else {
+            if (!d.gpsGCJ02 || typeof d.gpsGCJ02.lat !== 'number') return showCopyMsg('无可用GCJ02坐标', true);
+            coords = `${d.gpsGCJ02.lat.toFixed(8)},${d.gpsGCJ02.lng.toFixed(8)}`;
+        }
         navigator.clipboard.writeText(coords).then(() => {
-            const resultDiv = document.getElementById('result');
-            const msg = document.createElement('div');
-            msg.className = 'copy-notice';
-            msg.style.color = 'green';
-            msg.style.margin = '10px 0';
-            msg.textContent = `坐标已复制: ${coords}`;
-            resultDiv.prepend(msg);
-            setTimeout(() => msg.remove(), 3000);
+            showCopyMsg(`已复制 ${type === 'wgs' ? 'WGS84' : 'GCJ02'}: ${coords}`);
         }).catch(err => {
-            const resultDiv = document.getElementById('result');
-            const msg = document.createElement('div');
-            msg.className = 'copy-notice';
-            msg.style.color = 'red';
-            msg.style.margin = '10px 0';
-            msg.textContent = '复制失败: ' + err.message;
-            resultDiv.prepend(msg);
-            setTimeout(() => msg.remove(), 3000);
+            showCopyMsg('复制失败: ' + (err && err.message ? err.message : err), true);
         });
-    };
+    }
+
+    function showCopyMsg(text, isError) {
+        const resultDiv = document.getElementById('result');
+        const msg = document.createElement('div');
+        msg.className = 'copy-notice';
+        msg.style.color = isError ? 'red' : '#0b8046';
+        msg.style.margin = '10px 0';
+        msg.textContent = text;
+        resultDiv.prepend(msg);
+        setTimeout(() => msg.remove(), 3000);
+    }
 
     window.openInAmapSingle = function(idx) {
         if (!photosData[idx]) return;
