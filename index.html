@@ -376,7 +376,6 @@ var _hmt = _hmt || [];
                     <ul style="padding-left:15px;">
                                 <li><strong>原始坐标(WGS84)</strong>: <span title="${data.gpsWGS84.lat},${data.gpsWGS84.lng}">${data.gpsWGS84.lat.toFixed(8)}, ${data.gpsWGS84.lng.toFixed(8)}</span>
                                     <button class="coord-btn" onclick="copyCoord(${idx}, 'wgs')">复制 WGS84</button>
-                                    <button class="coord-btn" onclick="copyCoord(${idx}, 'gcj')">复制 GCJ02</button>
                                 </li>
                                 <li><strong>转换坐标(GCJ02)</strong>: <span title="${data.gpsGCJ02.lat},${data.gpsGCJ02.lng}">${data.gpsGCJ02.lat.toFixed(8)}, ${data.gpsGCJ02.lng.toFixed(8)}</span>
                                     <button class="coord-btn" onclick="copyCoord(${idx}, 'gcj')">复制 GCJ02</button>
