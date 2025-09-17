@@ -121,10 +121,11 @@ var _hmt = _hmt || [];
     function ensureExif() {
         return new Promise((resolve, reject) => {
             if (window.EXIF) return resolve();
+            const url = 'js/exif.min.js';
             const s = document.createElement('script');
-            s.src = 'https://cdn.jsdelivr.net/npm/exif-js@2.3.0/exif.min.js';
-            s.onload = () => resolve();
-            s.onerror = () => reject(new Error('无法加载 EXIF 库'));
+            s.src = url;
+            s.onload = () => { setTimeout(() => { if (window.EXIF) resolve(); else reject(new Error('EXIF 加载失败')); }, 0); };
+            s.onerror = (e) => { reject(new Error('无法加载本地 exif-js: ' + (e && e.message ? e.message : e))); };
             document.head.appendChild(s);
         });
     }
